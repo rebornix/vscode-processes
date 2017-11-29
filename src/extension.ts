@@ -11,7 +11,8 @@ import * as nls from 'vscode-nls';
 import { listProcesses, ProcessItem } from './ps';
 import { TreeDataProvider, TreeItem, EventEmitter, Event, ProviderResult } from 'vscode';
 import { setInterval } from 'timers';
-
+import * as paths from 'path';
+import * as os from 'os';
 
 export const localize = nls.config(process.env.VSCODE_NLS_CONFIG)();
 
@@ -39,7 +40,31 @@ export function activate(context: vscode.ExtensionContext) {
 			config.processId = String(item._process.pid);
 		}
 		vscode.debug.startDebugging(undefined, config);
-	}));
+    }));
+    
+    context.subscriptions.push(vscode.commands.registerCommand('extension.vscode-processes.startProfiling', async (item: ProcessTreeItem) => {
+        const profiler = await import('v8-inspect-profiler');
+        const matches = DEBUG_FLAGS_PATTERN.exec(item._process.cmd);
+        var port;
+        if (matches && matches.length >= 2) {
+			if (matches.length === 5 && matches[4]) {
+                port = parseInt(matches[4]);
+                
+                const filenamePrefix = paths.join(os.homedir(), Math.random().toString(16).slice(-4));                
+                
+                if (matches[1] !== 'debug') {
+                    return profiler.startProfiling({ port: port }).then(session => {
+                        return session.stop(5000);
+                    }).then(profile => {
+                        return profiler.writeProfile(profile, `${filenamePrefix}.cpuprofile`);
+                    }).then(() => {
+                        vscode.window.showInformationMessage(`CPU Profile saved to ${filenamePrefix}.cpuprofile`)
+                    });
+                }
+			}
+			
+		}
+    }));
 
 	context.subscriptions.push(vscode.commands.registerCommand('extension.vscode-processes.kill', (item: ProcessTreeItem) => {
 		if (item._process.pid) {

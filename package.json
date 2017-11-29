@@ -4,11 +4,11 @@
     "description": "Provide access to all VS Code processes",
     "version": "0.0.1",
     "publisher": "andreweinand",
-	"author": {
-		"name": "Microsoft Corporation",
-		"email": "aweinand@microsoft.com"
-	},
-	"license": "MIT",
+    "author": {
+        "name": "Microsoft Corporation",
+        "email": "aweinand@microsoft.com"
+    },
+    "license": "MIT",
     "engines": {
         "vscode": "^1.18.0",
         "node": "^7.9.0"
@@ -16,15 +16,16 @@
     "categories": [
         "Debuggers"
     ],
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/weinand/vscode-processes.git"
-	},
-	"bugs": {
-		"url": "https://github.com/weinand/vscode-processes/issues"
-	},
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/weinand/vscode-processes.git"
+    },
+    "bugs": {
+        "url": "https://github.com/weinand/vscode-processes/issues"
+    },
     "dependencies": {
-        "vscode-nls": "2.0.2"
+        "vscode-nls": "2.0.2",
+        "v8-inspect-profiler": "^0.0.6"
     },
     "devDependencies": {
         "typescript": "^2.6.1",
@@ -63,6 +64,9 @@
                 {
                     "command": "extension.vscode-processes.startDebug",
                     "when": "viewItem == 'node'"
+                },
+                {
+                    "command": "extension.vscode-processes.startProfiling"
                 }
             ]
         },
@@ -78,6 +82,10 @@
             {
                 "command": "extension.vscode-processes.startDebug",
                 "title": "Start Node Debugging"
+            },
+            {
+                "command": "extension.vscode-processes.startProfiling",
+                "title": "Start Profiling"
             }
         ]
     }
