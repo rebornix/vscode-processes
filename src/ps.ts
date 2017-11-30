@@ -16,6 +16,8 @@ export interface ProcessItem {
 	mem: number;
 
 	children?: ProcessItem[];
+	electronProcess?: boolean;
+	profiling?: boolean;
 }
 
 export function listProcesses(rootPid: number): Promise<ProcessItem> {
@@ -29,14 +31,15 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 
 			const parent = map.get(ppid);
 			if (pid === rootPid || parent) {
-
+				let processInfo = findName(cmd);
 				const item: ProcessItem = {
-					name: findName(cmd),
+					name: processInfo.name,
 					cmd,
 					pid,
 					ppid,
 					load,
-					mem
+					mem,
+					electronProcess: processInfo.electronProcess
 				};
 				map.set(pid, item);
 
@@ -56,7 +59,7 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 			}
 		}
 
-		function findName(cmd: string): string {
+		function findName(cmd: string): { name: string, electronProcess: boolean } {
 
 			const RENDERER_PROCESS_HINT = /--disable-blink-features=Auxclick/;
 			const WINDOWS_WATCHER_HINT = /\\watcher\\win32\\CodeHelper.exe/;
@@ -64,7 +67,10 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 
 			// find windows file watcher
 			if (WINDOWS_WATCHER_HINT.exec(cmd)) {
-				return 'watcherService';
+				return {
+					name: 'watcherService',
+					electronProcess: false
+				};
 			}
 
 			// find "--type=xxxx"
@@ -72,16 +78,26 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 			if (matches && matches.length === 2) {
 				if (matches[1] === 'renderer') {
 					if (!RENDERER_PROCESS_HINT.exec(cmd)) {
-						return 'shared-process';
+						return {
+							name: 'shared-process',
+							electronProcess: true
+						};
 					} else {
 						const RID = /--renderer-client-id=([0-9]+)/;
 						matches = RID.exec(cmd);
 						if (matches && matches.length === 2) {
-							return `renderer-${matches[1]}`;
+							return {
+								name: `renderer-${matches[1]}`,
+								electronProcess: true
+							};
 						}
 					}
 				}
-				return matches[1];
+				
+				return {
+					name: matches[1],
+					electronProcess: true
+				};
 			}
 
 			// find all xxxx.js
@@ -96,10 +112,16 @@ export function listProcesses(rootPid: number): Promise<ProcessItem> {
 
 			if (result) {
 				if (cmd.indexOf('node ') !== 0) {
-					return `electron_node ${result}`;
+					return {
+						name: `electron_node ${result}`,
+						electronProcess: true
+					};
 				}
 			}
-			return cmd;
+			return {
+				name: cmd,
+				electronProcess: false
+			};
 		}
 
 		if (process.platform === 'win32') {

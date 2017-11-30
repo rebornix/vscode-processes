@@ -10,7 +10,7 @@ import { basename } from 'path';
 import * as nls from 'vscode-nls';
 import { listProcesses, ProcessItem } from './ps';
 import { TreeDataProvider, TreeItem, EventEmitter, Event, ProviderResult } from 'vscode';
-import { setInterval } from 'timers';
+import { setInterval, clearInterval } from 'timers';
 import * as paths from 'path';
 import * as os from 'os';
 
@@ -35,36 +35,89 @@ export function activate(context: vscode.ExtensionContext) {
 			if (matches.length === 5 && matches[4]) {
 				config.port = parseInt(matches[4]);
 			}
-			config.protocol= matches[1] === 'debug' ? 'legacy' : 'inspector';
+			config.protocol = matches[1] === 'debug' ? 'legacy' : 'inspector';
 		} else {	// no port -> try to attach via SIGUSR and pid
 			config.processId = String(item._process.pid);
 		}
 		vscode.debug.startDebugging(undefined, config);
-    }));
-    
-    context.subscriptions.push(vscode.commands.registerCommand('extension.vscode-processes.startProfiling', async (item: ProcessTreeItem) => {
-        const profiler = await import('v8-inspect-profiler');
-        const matches = DEBUG_FLAGS_PATTERN.exec(item._process.cmd);
-        var port;
-        if (matches && matches.length >= 2) {
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('extension.vscode-processes.startProfiling', async (item: ProcessTreeItem) => {
+		const profiler = await import('v8-inspect-profiler');
+		const matches = DEBUG_FLAGS_PATTERN.exec(item._process.cmd);
+		var port;
+		if (matches && matches.length >= 2) {
+			let port = 9229;
 			if (matches.length === 5 && matches[4]) {
-                port = parseInt(matches[4]);
-                
-                const filenamePrefix = paths.join(os.homedir(), Math.random().toString(16).slice(-4));                
-                
-                if (matches[1] !== 'debug') {
-                    return profiler.startProfiling({ port: port }).then(session => {
-                        return session.stop(5000);
-                    }).then(profile => {
-                        return profiler.writeProfile(profile, `${filenamePrefix}.cpuprofile`);
-                    }).then(() => {
-                        vscode.window.showInformationMessage(`CPU Profile saved to ${filenamePrefix}.cpuprofile`)
-                    });
-                }
+				port = parseInt(matches[4]);
 			}
 			
+			const commandId = `cpu-profile-${port}`;
+			return profiler.startProfiling({ port: port }).then(session => {				
+				let updater;
+				let timeStarted = new Date().getTime();
+				var statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+				statusBarItem.text = `$(primitive-dot) Profiling ${item._process.name}`;
+				statusBarItem.tooltip = 'Click to stop';
+				
+				const disposeStatusBarItem = () => {
+					commandDisposable.dispose();
+					clearInterval(updater);
+					statusBarItem.hide();
+					statusBarItem.dispose();
+				};
+				
+				const commandDisposable = vscode.commands.registerCommand(commandId, () => {
+					return vscode.window.showQuickPick(['Upload', 'Save', 'Discard']).then(val => {
+						item._process.profiling = false;
+						item._eventEmitter.fire(item);
+						if (val === 'Discard') {
+							disposeStatusBarItem();
+							return session.stop();
+						} else if (val === 'Upload') {
+							return session.stop().then(profile => {
+								const filenamePrefix = paths.join(vscode.env['globalLoggingDirectory'], Math.random().toString(16).slice(-4));
+								const fileName = `${filenamePrefix}.cpuprofile`;
+								return profiler.writeProfile(profile, fileName).then(() => {
+									vscode.commands.executeCommand('verbose-logging.previewOrUpload');
+									disposeStatusBarItem();
+								}, disposeStatusBarItem);
+							});
+						} else {
+							return session.stop().then(profile => {
+								item._process.profiling = false;
+								item._eventEmitter.fire(item);
+								vscode.window.showSaveDialog({}).then(uri => {
+									const filePath = uri.path;
+									return profiler.writeProfile(profile, uri.path).then(() => {
+										vscode.window.showInformationMessage(`CPU Profile saved to ${filePath}`);
+										disposeStatusBarItem();
+									}, disposeStatusBarItem)
+								});
+							});
+						}
+					});
+				});
+		
+				statusBarItem.command = commandId;
+				statusBarItem.show();
+				
+				updater = setInterval(() => {
+					let label = `$(primitive-dot) Profiling ${item._process.name}`;
+					if (timeStarted > 0) {
+						let secondsRecoreded = (new Date().getTime() - timeStarted) / 1000;
+						label = ` $(primitive-dot) Profiling ${item._process.name} (${Math.round(secondsRecoreded)} sec)`;
+					}
+					
+					statusBarItem.text = label;
+				}, 1000);
+				
+				item._process.profiling = true;
+				// item.iconPath = context.asAbsolutePath('images/breakpoint.svg');
+				item._eventEmitter.fire(item);
+			});
 		}
-    }));
+	}));
 
 	context.subscriptions.push(vscode.commands.registerCommand('extension.vscode-processes.kill', (item: ProcessTreeItem) => {
 		if (item._process.pid) {
@@ -93,19 +146,37 @@ function getState(process: ProcessItem): vscode.TreeItemCollapsibleState {
 
 class ProcessTreeItem extends TreeItem {
 	_process: ProcessItem;
-
-	constructor(process: ProcessItem) {
+	_context: vscode.ExtensionContext;
+	_eventEmitter: EventEmitter<ProcessTreeItem>;
+	
+	constructor(process: ProcessItem, context: vscode.ExtensionContext, eventEmitter: EventEmitter<ProcessTreeItem>) {
 		super(getName(process), getState(process));
 		this._process = process;
+		this._context = context;
+		this._eventEmitter = eventEmitter;
 
 		const matches = DEBUG_FLAGS_PATTERN.exec(process.cmd);
-		if ((matches && matches.length >= 2) || process.name.startsWith('node ')) {
-			this.contextValue = 'node';
-		}
+		if ((matches && matches.length >= 2)) {
+			if (process.name.startsWith('node')) {
+				this.contextValue = 'node';
+				
+				if (matches[1] === 'debug') {
+					this.contextValue = 'node_inspect';
+				}
+			} else if (process.electronProcess && matches[1] === 'inspect') {
+				this.contextValue = 'electron_inspect';
+				
+				if (process.profiling) {
+					this.iconPath = this._context.asAbsolutePath('images/breakpoint.svg');
+				} else {
+					this.iconPath = this._context.asAbsolutePath('images/breakpoint-disabled-dark.svg');
+				}
+			}
+		}	
 	}
 	getChildren(): ProcessTreeItem[] {
 		if (this._process.children) {
-			return this._process.children.map(child => new ProcessTreeItem(child));
+			return this._process.children.map(child => new ProcessTreeItem(child, this._context, this._eventEmitter));
 		}
 		return [];
 	}
@@ -124,7 +195,7 @@ export class ProcessProvider implements TreeDataProvider<ProcessTreeItem> {
 
 		const pid = parseInt(process.env['VSCODE_PID']);
 
-		this._root = new ProcessTreeItem({ name: 'root', pid: 0, ppid: 0, cmd: 'root', load: 0.0, mem: 0.0});
+		this._root = new ProcessTreeItem({ name: 'root', pid: 0, ppid: 0, cmd: 'root', load: 0.0, mem: 0.0 }, context, this._onDidChangeTreeData);
 
 		setInterval(_ => {
 			listProcesses(pid).then(process => {

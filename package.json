@@ -66,7 +66,16 @@
                     "when": "viewItem == 'node'"
                 },
                 {
-                    "command": "extension.vscode-processes.startProfiling"
+                    "command": "extension.vscode-processes.startDebug",
+                    "when": "viewItem == 'node_inspect'"
+                },
+                {
+                    "command": "extension.vscode-processes.startProfiling",
+                    "when": "viewItem == 'node_inspect'"
+                },
+                {
+                    "command": "extension.vscode-processes.startProfiling",
+                    "when": "viewItem == 'electron_inspect'"
                 }
             ]
         },
